@@ -1,0 +1,27 @@
+package com.player.mindful.model
+
+data class PlayerUiState(
+    val tracks: List<Track> = emptyList(),
+    val filteredTracks: List<Track> = emptyList(),
+    val albumGroups: List<Pair<String, List<Track>>> = emptyList(),
+    val artistGroups: List<Pair<String, List<Track>>> = emptyList(),
+    val currentTrack: Track? = null,
+    val isPlaying: Boolean = false,
+    val positionStep: Int = 0,
+    val volume: Int = 7,
+    val theme: PlayerTheme = PlayerTheme.MARSHALL,
+    val isExpanded: Boolean = false,
+    val shuffle: Boolean = false,
+    val repeatMode: RepeatMode = RepeatMode.OFF,
+    val eqBass: Int = 5,
+    val eqMid: Int = 5,
+    val eqPresence: Int = 5,
+    val eqTreble: Int = 5,
+    val bassBoostOn: Boolean = false,
+    val speedIdx: Int = 1,
+    val pitchIdx: Int = 1,
+    val balanceIdx: Int = 1,
+    val searchQuery: String = "",
+    val sortMode: SortMode = SortMode.TITLE_ASC,
+    val favorites: Set<Long> = emptySet()
+)
