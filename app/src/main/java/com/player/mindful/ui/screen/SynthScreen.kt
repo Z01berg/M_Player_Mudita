@@ -1,307 +1,289 @@
 package com.player.mindful.ui.screen
 
 import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.remember
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.PathEffect
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.mudita.mmd.components.divider.HorizontalDividerMMD
 import com.mudita.mmd.components.text.TextMMD
+import com.player.mindful.model.PlayerUiState
+import com.player.mindful.model.Track
 import com.player.mindful.ui.theme.MudBlack
 import com.player.mindful.viewmodel.PlayerViewModel
 
-@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun SynthScreen(viewModel: PlayerViewModel) {
-    val tracks by viewModel.tracks.collectAsState()
-    val current by viewModel.currentTrack.collectAsState()
-    val isPlaying by viewModel.isPlaying.collectAsState()
-    val posStep by viewModel.positionStep.collectAsState()
-    val volume by viewModel.volume.collectAsState()
+    val state by viewModel.state.collectAsState()
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(6.dp)
-    ) {
-        // Header module — dashed border, synth model label
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .border(1.dp, MudBlack)
-                .padding(1.dp)
-                .combinedClickable(
-                    indication = null,
-                    interactionSource = remember { MutableInteractionSource() },
-                    onClick = {},
-                    onLongClick = { viewModel.cycleTheme() }
-                )
-        ) {
-            Canvas(modifier = Modifier.fillMaxSize()) {
-                drawRect(
-                    color = Color.Black,
-                    style = androidx.compose.ui.graphics.drawscope.Stroke(
-                        width = 1.dp.toPx(),
-                        pathEffect = PathEffect.dashPathEffect(floatArrayOf(4f, 4f))
-                    )
-                )
+    var nowPlayingOpen by remember { mutableStateOf(true) }
+    var seekOpen       by remember { mutableStateOf(true) }
+    var controlsOpen   by remember { mutableStateOf(true) }
+    var volumeOpen     by remember { mutableStateOf(true) }
+    var moduleOpen     by remember { mutableStateOf(false) }
+    var libraryOpen    by remember { mutableStateOf(true) }
+    var libraryTab     by remember { mutableStateOf(0) }
+    var searchText     by remember { mutableStateOf("") }
+    var eqPreset       by remember { mutableStateOf(0) }
+
+    val currentIdx = state.tracks.indexOfFirst { it.id == state.currentTrack?.id }
+    val prevTrack  = if (currentIdx > 0) state.tracks[currentIdx - 1] else null
+    val nextTrack  = if (currentIdx in 0 until state.tracks.size - 1) state.tracks[currentIdx + 1] else null
+    val currentMs  = state.currentTrack?.let { it.durationMs * state.positionStep / 20L } ?: 0L
+    val totalMs    = state.currentTrack?.durationMs ?: 0L
+
+    Column(modifier = Modifier.fillMaxSize().safeDrawingPadding()) {
+        SynthHeader(viewModel, state, Modifier.padding(horizontal = 8.dp, vertical = 6.dp))
+
+        if (state.isExpanded) {
+            Column(modifier = Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(horizontal = 8.dp, vertical = 6.dp)) {
+                SynthNowPlayingCard(state, prevTrack, nextTrack, currentMs, totalMs)
+                Spacer(Modifier.height(10.dp))
+                SynthSeqGrid(state, currentMs, totalMs, viewModel)
+                Spacer(Modifier.height(8.dp))
+                TransportButtonRow(state.isPlaying, { viewModel.previousTrack() }, { viewModel.playPause() }, { viewModel.nextTrack() }, { viewModel.stop() },
+                    labelPrev = "REW", labelPlay = if (state.isPlaying) "PAUSE" else "PLAY", labelNext = "FWD", labelStop = "STOP", fontSize = 11)
+                Spacer(Modifier.height(8.dp))
+                SynthVolumeRow(state.volume, viewModel)
+                Spacer(Modifier.height(8.dp))
+                SynthModuleContent(state, eqPreset, viewModel) { eqPreset = it }
+                Spacer(Modifier.height(8.dp))
+                Box(contentAlignment = Alignment.Center,
+                    modifier = Modifier.fillMaxWidth().border(1.dp, MudBlack)
+                        .clickable(indication = null, interactionSource = remember { MutableInteractionSource() }) { viewModel.toggleExpanded() }
+                        .padding(vertical = 10.dp)
+                ) { TextMMD("[ESC: TRACK LIST]", fontSize = 11.sp, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold, color = MudBlack) }
             }
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 8.dp, vertical = 6.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                TextMMD(
-                    text = "SYNTH PLAYER",
-                    fontSize = 16.sp,
-                    fontWeight = FontWeight.Bold,
-                    fontFamily = FontFamily.Monospace,
-                    letterSpacing = 3.sp,
-                    color = MudBlack
-                )
-                TextMMD(
-                    text = "v1.0",
-                    fontSize = 10.sp,
-                    fontFamily = FontFamily.Monospace,
-                    color = MudBlack
-                )
-            }
-        }
+        } else {
+            val ls = rememberLazyListState()
+            Box(modifier = Modifier.weight(1f)) {
+                LazyColumn(state = ls, modifier = Modifier.fillMaxSize().padding(horizontal = 8.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)) {
 
-        Spacer(Modifier.height(6.dp))
+                    item { CollapsiblePanel("NOW PLAYING", nowPlayingOpen, { nowPlayingOpen = !nowPlayingOpen }) {
+                        Column {
+                            Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+                                TextMMD("${if (state.isPlaying) "▶ PLAY" else "■ STOP"}  POS:${"%02d".format(state.positionStep)}/20  VOL:${"%02d".format(state.volume)}",
+                                    fontSize = 9.sp, fontFamily = FontFamily.Monospace, color = MudBlack)
+                                Box(modifier = Modifier.border(1.dp, MudBlack)
+                                    .clickable(indication = null, interactionSource = remember { MutableInteractionSource() }) { viewModel.toggleExpanded() }
+                                    .padding(horizontal = 8.dp, vertical = 5.dp)
+                                ) { TextMMD("[▲]", fontSize = 9.sp, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold, color = MudBlack) }
+                            }
+                            HorizontalDividerMMD(thickness = 1.dp, color = MudBlack)
+                            Spacer(Modifier.height(6.dp))
+                            TextMMD(state.currentTrack?.title ?: "< NO TRACK LOADED >", fontSize = 14.sp, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold, color = MudBlack)
+                            TextMMD(state.currentTrack?.artist ?: "", fontSize = 11.sp, fontFamily = FontFamily.Monospace, color = MudBlack)
+                            if (state.currentTrack != null) TextMMD("${formatMs(currentMs)} / ${formatMs(totalMs)}", fontSize = 10.sp, fontFamily = FontFamily.Monospace, color = MudBlack)
+                        }
+                    }}
 
-        // LCD display module — segmented-style track info
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .border(2.dp, MudBlack)
-                .padding(8.dp)
-        ) {
-            Column {
-                // Simulated LCD row
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    TextMMD(
-                        text = if (isPlaying) "▶ PLAY" else "■ STOP",
-                        fontSize = 10.sp,
-                        fontFamily = FontFamily.Monospace,
-                        fontWeight = FontWeight.Bold,
-                        color = MudBlack
-                    )
-                    TextMMD(
-                        text = "POS: %02d/20".format(posStep),
-                        fontSize = 10.sp,
-                        fontFamily = FontFamily.Monospace,
-                        color = MudBlack
-                    )
-                    TextMMD(
-                        text = "VOL: %02d".format(volume),
-                        fontSize = 10.sp,
-                        fontFamily = FontFamily.Monospace,
-                        color = MudBlack
-                    )
-                }
-                HorizontalDividerMMD(thickness = 1.dp, color = MudBlack)
-                Spacer(Modifier.height(4.dp))
-                TextMMD(
-                    text = current?.title ?: "< NO TRACK LOADED >",
-                    fontSize = 13.sp,
-                    fontFamily = FontFamily.Monospace,
-                    fontWeight = FontWeight.Bold,
-                    color = MudBlack
-                )
-                TextMMD(
-                    text = current?.artist ?: "",
-                    fontSize = 10.sp,
-                    fontFamily = FontFamily.Monospace,
-                    color = MudBlack
-                )
-                TextMMD(
-                    text = current?.album ?: "",
-                    fontSize = 10.sp,
-                    fontFamily = FontFamily.Monospace,
-                    color = MudBlack
-                )
-            }
-        }
+                    item { CollapsiblePanel("SEQ  ·  SEEK", seekOpen, { seekOpen = !seekOpen }) {
+                        SynthSeqGrid(state, currentMs, totalMs, viewModel)
+                    }}
 
-        Spacer(Modifier.height(6.dp))
+                    item { CollapsiblePanel("CONTROLS", controlsOpen, { controlsOpen = !controlsOpen }) {
+                        TransportButtonRow(state.isPlaying, { viewModel.previousTrack() }, { viewModel.playPause() }, { viewModel.nextTrack() }, { viewModel.stop() },
+                            labelPrev = "REW", labelPlay = if (state.isPlaying) "PAUSE" else "PLAY", labelNext = "FWD", labelStop = "STOP", fontSize = 11)
+                    }}
 
-        // Step sequencer-style seek — 20 cells in 2 rows of 10
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .border(1.dp, MudBlack)
-                .padding(4.dp),
-            verticalArrangement = Arrangement.spacedBy(3.dp)
-        ) {
-            TextMMD(
-                "SEQ",
-                fontSize = 8.sp,
-                fontFamily = FontFamily.Monospace,
-                fontWeight = FontWeight.Bold,
-                color = MudBlack
-            )
-            repeat(2) { row ->
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(2.dp)
-                ) {
-                    repeat(10) { col ->
-                        val step = row * 10 + col
-                        val filled = step < posStep
-                        Box(
-                            modifier = Modifier
-                                .weight(1f)
-                                .height(16.dp)
-                                .border(1.dp, MudBlack)
-                                .clickable(
-                                    indication = null,
-                                    interactionSource = remember { MutableInteractionSource() }
-                                ) { viewModel.seekToStep(step + 1) }
-                        ) {
-                            if (filled) {
-                                Canvas(Modifier.fillMaxSize()) { drawRect(Color.Black) }
+                    item { CollapsiblePanel("VOLUME", volumeOpen, { volumeOpen = !volumeOpen }) {
+                        SynthVolumeRow(state.volume, viewModel)
+                    }}
+
+                    item { CollapsiblePanel("SYNTH MODULE  ·  SPEED / EQ / PITCH", moduleOpen, { moduleOpen = !moduleOpen }) {
+                        SynthModuleContent(state, eqPreset, viewModel) { eqPreset = it }
+                    }}
+
+                    item { Canvas(modifier = Modifier.fillMaxWidth().height(8.dp)) {
+                        val step = 8.dp.toPx(); var x = 0f
+                        while (x < size.width) { drawLine(Color.Black, Offset(x, 0f), Offset(x, size.height), strokeWidth = 1f); x += step }
+                    }}
+
+                    item { CollapsiblePanel("LIBRARY  ·  ${state.tracks.size} TRACKS", libraryOpen, { libraryOpen = !libraryOpen }) {
+                        LibraryControls(searchText, state.sortMode, libraryTab, state.filteredTracks.size,
+                            { searchText = it; viewModel.setSearch(it) }, { viewModel.cycleSort() }, { libraryTab = it })
+                    }}
+
+                    if (libraryOpen) {
+                        when (libraryTab) {
+                            0 -> items(state.filteredTracks, key = { it.id }) { t ->
+                                SynthTrackRow(t, t.id == state.currentTrack?.id, t.id in state.favorites, { viewModel.playTrack(t) }, { viewModel.toggleFavorite(t.id) })
+                                HorizontalDividerMMD(thickness = 1.dp, color = MudBlack)
+                            }
+                            1 -> state.albumGroups.forEach { (album, tracks) ->
+                                item(key = "a_$album") { SynthGroupHeader("// ${album.ifBlank { "Unknown Album" }} [${tracks.size}]") }
+                                items(tracks, key = { "ta_${it.id}" }) { t -> SynthTrackRow(t, t.id == state.currentTrack?.id, t.id in state.favorites, { viewModel.playTrack(t) }, { viewModel.toggleFavorite(t.id) }); HorizontalDividerMMD(thickness = 1.dp, color = MudBlack) }
+                            }
+                            2 -> state.artistGroups.forEach { (artist, tracks) ->
+                                item(key = "ar_$artist") { SynthGroupHeader(">> ${artist.ifBlank { "Unknown Artist" }} [${tracks.size}]") }
+                                items(tracks, key = { "tr_${it.id}" }) { t -> SynthTrackRow(t, t.id == state.currentTrack?.id, t.id in state.favorites, { viewModel.playTrack(t) }, { viewModel.toggleFavorite(t.id) }); HorizontalDividerMMD(thickness = 1.dp, color = MudBlack) }
                             }
                         }
                     }
+                    item { Spacer(Modifier.height(8.dp)) }
+                }
+                MudScrollbar(ls)
+            }
+        }
+    }
+}
+
+@Composable
+private fun SynthHeader(viewModel: PlayerViewModel, state: PlayerUiState, modifier: Modifier = Modifier) {
+    Box(modifier = modifier.fillMaxWidth().border(1.dp, MudBlack).padding(1.dp)) {
+        Canvas(modifier = Modifier.matchParentSize()) {
+            drawRect(Color.Black, style = Stroke(width = 1.dp.toPx(), pathEffect = PathEffect.dashPathEffect(floatArrayOf(4f, 4f))))
+        }
+        Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+            Column {
+                TextMMD("SYNTH PLAYER", fontSize = 16.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace, letterSpacing = 3.sp, color = MudBlack)
+                TextMMD("STA:${if (state.isPlaying) "PLAY" else "STOP"}  POS:${"%02d".format(state.positionStep)}  VOL:${"%02d".format(state.volume)}",
+                    fontSize = 8.sp, fontFamily = FontFamily.Monospace, color = MudBlack)
+            }
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                TextMMD("v1.0", fontSize = 10.sp, fontFamily = FontFamily.Monospace, color = MudBlack)
+                ThemeSwitchButton(viewModel)
+            }
+        }
+    }
+}
+
+@Composable
+private fun SynthNowPlayingCard(state: PlayerUiState, prevTrack: Track?, nextTrack: Track?, currentMs: Long, totalMs: Long) {
+    Box(modifier = Modifier.fillMaxWidth().border(2.dp, MudBlack).padding(2.dp).border(1.dp, MudBlack)) {
+        Canvas(modifier = Modifier.matchParentSize()) {
+            val step = 8.dp.toPx(); var x = 0f
+            while (x < size.width) { drawLine(Color(0x18000000), Offset(x, 0f), Offset(x, size.height), strokeWidth = 1f); x += step }
+        }
+        Column(modifier = Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            TextMMD("PREV: ${prevTrack?.title ?: "< BEGIN >"}", fontSize = 10.sp, fontFamily = FontFamily.Monospace, color = MudBlack)
+            if (prevTrack != null) TextMMD("      ${prevTrack.artist}  ·  ${formatMs(prevTrack.durationMs)}", fontSize = 9.sp, fontFamily = FontFamily.Monospace, color = MudBlack)
+            HorizontalDividerMMD(thickness = 1.dp, color = MudBlack)
+            Spacer(Modifier.height(8.dp))
+            TextMMD(if (state.isPlaying) "▶ NOW PLAYING" else "■ PAUSED", fontSize = 9.sp, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold, color = MudBlack)
+            TextMMD(state.currentTrack?.title ?: "< NO TRACK >", fontSize = 18.sp, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Black, color = MudBlack)
+            TextMMD(state.currentTrack?.artist ?: "", fontSize = 11.sp, fontFamily = FontFamily.Monospace, color = MudBlack)
+            TextMMD("${formatMs(currentMs)} / ${formatMs(totalMs)}  |  POS:${"%02d".format(state.positionStep)}/20",
+                fontSize = 10.sp, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold, color = MudBlack)
+            Spacer(Modifier.height(8.dp))
+            HorizontalDividerMMD(thickness = 1.dp, color = MudBlack)
+            TextMMD("NEXT: ${nextTrack?.title ?: "< END >"}", fontSize = 10.sp, fontFamily = FontFamily.Monospace, color = MudBlack)
+            if (nextTrack != null) TextMMD("      ${nextTrack.artist}  ·  ${formatMs(nextTrack.durationMs)}", fontSize = 9.sp, fontFamily = FontFamily.Monospace, color = MudBlack)
+        }
+    }
+}
+
+@Composable
+private fun SynthSeqGrid(state: PlayerUiState, currentMs: Long, totalMs: Long, viewModel: PlayerViewModel) {
+    Column(modifier = Modifier.fillMaxWidth().border(1.dp, MudBlack).padding(4.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            TextMMD("SEQ", fontSize = 9.sp, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold, color = MudBlack)
+            TextMMD("${formatMs(currentMs)} / ${formatMs(totalMs)}", fontSize = 9.sp, fontFamily = FontFamily.Monospace, color = MudBlack)
+        }
+        repeat(2) { row ->
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+                repeat(10) { col ->
+                    val step = row * 10 + col
+                    Box(modifier = Modifier.weight(1f).height(16.dp).border(1.dp, MudBlack)
+                        .clickable(indication = null, interactionSource = remember { MutableInteractionSource() }) { viewModel.seekToStep(step + 1) }
+                    ) { if (step < state.positionStep) Canvas(Modifier.fillMaxSize()) { drawRect(Color.Black) } }
                 }
             }
         }
+    }
+}
 
-        Spacer(Modifier.height(6.dp))
-
-        // Controls — monospace labels in bordered cells
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(4.dp)
-        ) {
-            listOf("REW" to {}, "PLAY" to { viewModel.playPause() }, "FWD" to {}, "STOP" to { viewModel.stop() })
-                .forEach { (label, action) ->
-                    Box(
-                        contentAlignment = Alignment.Center,
-                        modifier = Modifier
-                            .weight(1f)
-                            .border(1.dp, MudBlack)
-                            .clickable(
-                                indication = null,
-                                interactionSource = remember { MutableInteractionSource() },
-                                onClick = action
-                            )
-                            .padding(vertical = 8.dp)
-                    ) {
-                        TextMMD(
-                            text = label,
-                            fontSize = 10.sp,
-                            fontFamily = FontFamily.Monospace,
-                            fontWeight = FontWeight.Bold,
-                            color = MudBlack
-                        )
-                    }
-                }
+@Composable
+private fun SynthVolumeRow(volume: Int, viewModel: PlayerViewModel) {
+    Row(modifier = Modifier.fillMaxWidth().border(1.dp, MudBlack).padding(horizontal = 6.dp, vertical = 5.dp),
+        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+        TextMMD("VOL", fontSize = 10.sp, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold, color = MudBlack)
+        Box(contentAlignment = Alignment.Center, modifier = Modifier.border(1.dp, MudBlack)
+            .clickable(indication = null, interactionSource = remember { MutableInteractionSource() }) { viewModel.setVolume(maxOf(0, volume - 1)) }
+            .padding(horizontal = 5.dp, vertical = 4.dp)
+        ) { TextMMD("−", fontSize = 9.sp, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold, color = MudBlack) }
+        repeat(10) { i ->
+            Box(modifier = Modifier.weight(1f).height(20.dp).border(1.dp, MudBlack)
+                .clickable(indication = null, interactionSource = remember { MutableInteractionSource() }) { viewModel.setVolume(i + 1) }
+            ) { if (i < volume) Canvas(Modifier.fillMaxSize()) { drawRect(Color.Black) } }
         }
+        Box(contentAlignment = Alignment.Center, modifier = Modifier.border(1.dp, MudBlack)
+            .clickable(indication = null, interactionSource = remember { MutableInteractionSource() }) { viewModel.setVolume(minOf(10, volume + 1)) }
+            .padding(horizontal = 5.dp, vertical = 4.dp)
+        ) { TextMMD("+", fontSize = 9.sp, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold, color = MudBlack) }
+    }
+}
 
-        Spacer(Modifier.height(6.dp))
-
-        // Volume module — horizontal bar graph
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .border(1.dp, MudBlack)
-                .padding(horizontal = 6.dp, vertical = 4.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(4.dp)
-        ) {
-            TextMMD("VOL", fontSize = 8.sp, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold, color = MudBlack)
-            repeat(10) { i ->
-                Box(
-                    modifier = Modifier
-                        .weight(1f)
-                        .height(20.dp)
-                        .border(1.dp, MudBlack)
-                        .clickable(
-                            indication = null,
-                            interactionSource = remember { MutableInteractionSource() }
-                        ) { viewModel.setVolume(i + 1) }
-                ) {
-                    if (i < volume) {
-                        Canvas(Modifier.fillMaxSize()) { drawRect(Color.Black) }
-                    }
-                }
+@Composable
+private fun SynthModuleContent(state: PlayerUiState, eqPreset: Int, viewModel: PlayerViewModel, onEqPreset: (Int) -> Unit) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.Bottom) {
+            Column {
+                TextMMD("SPEED", fontSize = 9.sp, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold, color = MudBlack)
+                Spacer(Modifier.height(3.dp))
+                MultiSelector(listOf("0.8×", "1.0×", "1.2×"), state.speedIdx, { viewModel.setSpeedIdx(it) }, 9.sp, FontFamily.Monospace)
+            }
+            Column {
+                TextMMD("EQ", fontSize = 9.sp, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold, color = MudBlack)
+                Spacer(Modifier.height(3.dp))
+                MultiSelector(listOf("WARM", "FLAT", "BRIT"), eqPreset, { onEqPreset(it); viewModel.applyEqPreset(when (it) { 0 -> 3; 2 -> 4; else -> 0 }) }, 9.sp, FontFamily.Monospace)
+            }
+            Column {
+                TextMMD("PITCH", fontSize = 9.sp, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold, color = MudBlack)
+                Spacer(Modifier.height(3.dp))
+                MultiSelector(listOf("-1", "+0", "+1"), state.pitchIdx, { viewModel.setPitchIdx(it) }, 9.sp, FontFamily.Monospace)
             }
         }
-
-        Spacer(Modifier.height(6.dp))
-
-        // Grid divider
-        Canvas(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(8.dp)
-        ) {
-            val step = 8.dp.toPx()
-            var x = 0f
-            while (x < size.width) {
-                drawLine(Color.Black, Offset(x, 0f), Offset(x, size.height), strokeWidth = 1f)
-                x += step
-            }
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+            TextMMD("MODE:", fontSize = 9.sp, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold, color = MudBlack)
+            PhysicalSwitch(state.shuffle, "SHUFFLE") { viewModel.toggleShuffle() }
+            RepeatButton(state.repeatMode, "REPEAT") { viewModel.cycleRepeat() }
         }
+    }
+}
 
-        Spacer(Modifier.height(4.dp))
+@Composable
+private fun SynthGroupHeader(title: String) {
+    Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 7.dp)) {
+        TextMMD(title, fontSize = 10.sp, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold, color = MudBlack)
+    }
+    HorizontalDividerMMD(thickness = 1.dp, color = MudBlack)
+}
 
-        // Track list
-        LazyColumn(modifier = Modifier.weight(1f)) {
-            items(tracks, key = { it.id }) { track ->
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable(
-                            indication = null,
-                            interactionSource = remember { MutableInteractionSource() }
-                        ) { viewModel.playTrack(track) }
-                        .padding(horizontal = 6.dp, vertical = 6.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    val isCurrent = track.id == current?.id
-                    TextMMD(
-                        text = "${if (isCurrent) ">" else " "} ${track.title}",
-                        fontSize = 11.sp,
-                        fontFamily = FontFamily.Monospace,
-                        fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.Normal,
-                        color = MudBlack,
-                        modifier = Modifier.weight(1f)
-                    )
-                    TextMMD(
-                        text = formatMs(track.durationMs),
-                        fontSize = 10.sp,
-                        fontFamily = FontFamily.Monospace,
-                        color = MudBlack
-                    )
-                }
-                HorizontalDividerMMD(thickness = 1.dp, color = MudBlack)
-            }
+@Composable
+private fun SynthTrackRow(track: Track, isCurrent: Boolean, isFav: Boolean, onClick: () -> Unit, onFav: () -> Unit) {
+    Row(modifier = Modifier.fillMaxWidth()
+        .clickable(indication = null, interactionSource = remember { MutableInteractionSource() }, onClick = onClick)
+        .padding(horizontal = 8.dp, vertical = 9.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        TextMMD("${if (isCurrent) "▶" else "▷"} ", fontSize = 11.sp, fontFamily = FontFamily.Monospace, fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.Normal, color = MudBlack)
+        Column(modifier = Modifier.weight(1f)) {
+            TextMMD(track.title, fontSize = 12.sp, fontFamily = FontFamily.Monospace, fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.Normal, color = MudBlack)
+            TextMMD(track.artist, fontSize = 10.sp, fontFamily = FontFamily.Monospace, color = MudBlack)
+        }
+        TextMMD(formatMs(track.durationMs), fontSize = 10.sp, fontFamily = FontFamily.Monospace, color = MudBlack)
+        Spacer(Modifier.width(8.dp))
+        Box(modifier = Modifier.clickable(indication = null, interactionSource = remember { MutableInteractionSource() }, onClick = onFav)) {
+            TextMMD(if (isFav) "★" else "☆", fontSize = 13.sp, color = MudBlack)
         }
     }
 }
