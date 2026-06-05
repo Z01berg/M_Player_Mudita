@@ -12,7 +12,13 @@ data class PlayerUiState(
     val theme: PlayerTheme = PlayerTheme.MARSHALL,
     val isExpanded: Boolean = false,
     val shuffle: Boolean = false,
+    val shuffleOrder: List<Long> = emptyList(),
+    val shuffleIndex: Int = 0,
     val repeatMode: RepeatMode = RepeatMode.OFF,
+    val queue: List<Track> = emptyList(),
+    val sleepTimerEndAt: Long? = null,
+    val sleepTimerRemainingSec: Int? = null,
+    val sleepTimerTotalSec: Int? = null,
     val eqBass: Int = 5,
     val eqMid: Int = 5,
     val eqPresence: Int = 5,
@@ -23,5 +29,6 @@ data class PlayerUiState(
     val balanceIdx: Int = 1,
     val searchQuery: String = "",
     val sortMode: SortMode = SortMode.TITLE_ASC,
-    val favorites: Set<Long> = emptySet()
+    val favorites: Set<Long> = emptySet(),
+    val playlists: List<Playlist> = emptyList()
 )
