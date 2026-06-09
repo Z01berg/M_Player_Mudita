@@ -3,6 +3,7 @@ package com.player.mindful.service
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.app.PendingIntent
 import android.app.Service
 import android.content.Intent
 import android.media.MediaPlayer
@@ -11,6 +12,11 @@ import android.media.audiofx.BassBoost
 import android.media.audiofx.Equalizer
 import android.os.Binder
 import android.os.IBinder
+import android.support.v4.media.MediaMetadataCompat
+import android.support.v4.media.session.MediaSessionCompat
+import android.support.v4.media.session.PlaybackStateCompat
+import androidx.core.app.NotificationCompat
+import androidx.media.app.NotificationCompat as MediaNotificationCompat
 import com.player.mindful.model.Track
 
 class PlayerService : Service() {
@@ -21,13 +27,12 @@ class PlayerService : Service() {
 
     private val binder = PlayerBinder()
     private var mediaPlayer: MediaPlayer? = null
+    private lateinit var mediaSession: MediaSessionCompat
 
-    // Audio effects — recreated each new track
     private var equalizer: Equalizer? = null
     private var bassBoost: BassBoost? = null
 
-    // Persisted effect settings
-    private val eqBands = ShortArray(5) { 0 }   // millibels per band; 5 bands: sub/bass/mid/pres/treble
+    private val eqBands = ShortArray(5) { 0 }
     private var bassBoostStr: Short = 0
     private var playbackSpeed: Float = 1.0f
     private var pitchFactor: Float = 1.0f
@@ -45,13 +50,38 @@ class PlayerService : Service() {
 
     var onStateChanged: (() -> Unit)? = null
     var onTrackCompleted: (() -> Unit)? = null
+    var onSkipNextRequested: (() -> Unit)? = null
+    var onSkipPreviousRequested: (() -> Unit)? = null
 
     override fun onBind(intent: Intent): IBinder = binder
 
     override fun onCreate() {
         super.onCreate()
         createNotificationChannel()
+        setupMediaSession()
         startForeground(1, buildNotification())
+    }
+
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        when (intent?.action) {
+            ACTION_PLAY_PAUSE -> playPause()
+            ACTION_NEXT -> onSkipNextRequested?.invoke()
+            ACTION_PREVIOUS -> onSkipPreviousRequested?.invoke()
+        }
+        return super.onStartCommand(intent, flags, startId)
+    }
+
+    private fun setupMediaSession() {
+        mediaSession = MediaSessionCompat(this, "PlayerService").apply {
+            setCallback(object : MediaSessionCompat.Callback() {
+                override fun onPlay() { playPause() }
+                override fun onPause() { playPause() }
+                override fun onSkipToNext() { onSkipNextRequested?.invoke() }
+                override fun onSkipToPrevious() { onSkipPreviousRequested?.invoke() }
+                override fun onStop() { stop() }
+            })
+            isActive = true
+        }
     }
 
     fun play(track: Track) {
@@ -68,6 +98,7 @@ class PlayerService : Service() {
         isPlaying = true
         applyVolume()
         attachEffects()
+        updateMediaSession()
         onStateChanged?.invoke()
     }
 
@@ -78,6 +109,7 @@ class PlayerService : Service() {
         } else {
             mp.seekTo(positionMs); mp.start(); isPlaying = true
         }
+        updateMediaSession()
         onStateChanged?.invoke()
     }
 
@@ -93,10 +125,10 @@ class PlayerService : Service() {
         mediaPlayer?.release(); mediaPlayer = null
         releaseEffects()
         isPlaying = false; positionMs = 0; currentTrack = null
+        updateMediaSession()
         onStateChanged?.invoke()
     }
 
-    // ── Volume & Balance ──────────────────────────────────────────────────────
     fun setVolume(v: Int) { currentVolume = v; applyVolume() }
 
     fun setBalance(l: Float, r: Float) { balanceL = l; balanceR = r; applyVolume() }
@@ -106,27 +138,23 @@ class PlayerService : Service() {
         mediaPlayer?.setVolume(balanceL * f, balanceR * f)
     }
 
-    // ── Equalizer ─────────────────────────────────────────────────────────────
     fun setEqBand(band: Int, levelMb: Short) {
         if (band !in 0..4) return
         eqBands[band] = levelMb
         try { equalizer?.setBandLevel(band.toShort(), levelMb) } catch (_: Exception) {}
     }
 
-    // ── Bass Boost ────────────────────────────────────────────────────────────
     fun setBassBoost(strength: Short) {
         bassBoostStr = strength
         try { if (strength > 0) { bassBoost?.enabled = true; bassBoost?.setStrength(strength) }
               else { bassBoost?.enabled = false } } catch (_: Exception) {}
     }
 
-    // ── Playback Speed & Pitch ────────────────────────────────────────────────
     fun setSpeedPitch(speed: Float, pitch: Float) {
         playbackSpeed = speed; pitchFactor = pitch
         try { mediaPlayer?.playbackParams = PlaybackParams().setSpeed(speed).setPitch(pitch) } catch (_: Exception) {}
     }
 
-    // ── Effects lifecycle ─────────────────────────────────────────────────────
     private fun attachEffects() {
         val id = mediaPlayer?.audioSessionId ?: return
         try {
@@ -150,6 +178,7 @@ class PlayerService : Service() {
 
     private fun onCompletion() {
         isPlaying = false; positionMs = 0
+        updateMediaSession()
         onStateChanged?.invoke(); onTrackCompleted?.invoke()
     }
 
@@ -158,14 +187,62 @@ class PlayerService : Service() {
         getSystemService(NotificationManager::class.java).createNotificationChannel(ch)
     }
 
+    private fun updateMediaSession() {
+        val state = if (isPlaying) PlaybackStateCompat.STATE_PLAYING else PlaybackStateCompat.STATE_PAUSED
+        mediaSession.setPlaybackState(
+            PlaybackStateCompat.Builder()
+                .setActions(
+                    PlaybackStateCompat.ACTION_PLAY_PAUSE or
+                        PlaybackStateCompat.ACTION_SKIP_TO_NEXT or
+                        PlaybackStateCompat.ACTION_SKIP_TO_PREVIOUS or
+                        PlaybackStateCompat.ACTION_STOP
+                )
+                .setState(state, getCurrentPositionMs().toLong(), 1f)
+                .build()
+        )
+        mediaSession.setMetadata(
+            MediaMetadataCompat.Builder()
+                .putString(MediaMetadataCompat.METADATA_KEY_TITLE, currentTrack?.title ?: "")
+                .putString(MediaMetadataCompat.METADATA_KEY_ARTIST, currentTrack?.artist ?: "")
+                .putLong(MediaMetadataCompat.METADATA_KEY_DURATION, currentTrack?.durationMs ?: 0L)
+                .build()
+        )
+        getSystemService(NotificationManager::class.java).notify(1, buildNotification())
+    }
+
+    private fun actionPendingIntent(action: String): PendingIntent =
+        PendingIntent.getService(
+            this, action.hashCode(), Intent(this, PlayerService::class.java).setAction(action),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
     private fun buildNotification(): Notification =
-        Notification.Builder(this, "player")
+        NotificationCompat.Builder(this, "player")
             .setContentTitle(currentTrack?.title ?: "Player")
             .setContentText(currentTrack?.artist ?: "")
             .setSmallIcon(android.R.drawable.ic_media_play)
+            .setOngoing(isPlaying)
+            .addAction(android.R.drawable.ic_media_previous, "Previous", actionPendingIntent(ACTION_PREVIOUS))
+            .addAction(
+                if (isPlaying) android.R.drawable.ic_media_pause else android.R.drawable.ic_media_play,
+                "Play/Pause", actionPendingIntent(ACTION_PLAY_PAUSE)
+            )
+            .addAction(android.R.drawable.ic_media_next, "Next", actionPendingIntent(ACTION_NEXT))
+            .setStyle(
+                MediaNotificationCompat.MediaStyle()
+                    .setMediaSession(mediaSession.sessionToken)
+                    .setShowActionsInCompactView(0, 1, 2)
+            )
             .build()
 
     override fun onDestroy() {
+        mediaSession.release()
         releaseEffects(); mediaPlayer?.release(); super.onDestroy()
+    }
+
+    companion object {
+        private const val ACTION_PLAY_PAUSE = "com.player.mindful.action.PLAY_PAUSE"
+        private const val ACTION_NEXT = "com.player.mindful.action.NEXT"
+        private const val ACTION_PREVIOUS = "com.player.mindful.action.PREVIOUS"
     }
 }
