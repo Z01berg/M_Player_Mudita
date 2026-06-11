@@ -5,8 +5,11 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.ServiceConnection
+import android.database.ContentObserver
 import android.database.Cursor
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
 import android.provider.MediaStore
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
@@ -15,10 +18,12 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.player.mindful.model.PlayerTheme
 import com.player.mindful.model.PlayerUiState
+import com.player.mindful.model.Playlist
 import com.player.mindful.model.RepeatMode
 import com.player.mindful.model.SortMode
 import com.player.mindful.model.Track
 import com.player.mindful.service.PlayerService
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -26,9 +31,13 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.serialization.decodeFromString
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
 
 private val Context.dataStore by preferencesDataStore("player_prefs")
 private val THEME_KEY = stringPreferencesKey("theme")
+private val PLAYLISTS_KEY = stringPreferencesKey("playlists")
 
 class PlayerViewModel(application: Application) : AndroidViewModel(application) {
 
@@ -36,12 +45,19 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     val state: StateFlow<PlayerUiState> = _state.asStateFlow()
 
     private var service: PlayerService? = null
+    private var sleepTimerJob: Job? = null
+
+    private val mediaStoreObserver = object : ContentObserver(Handler(Looper.getMainLooper())) {
+        override fun onChange(selfChange: Boolean) = loadTracks()
+    }
 
     private val connection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName, binder: IBinder) {
             service = (binder as PlayerService.PlayerBinder).getService()
             service?.onStateChanged = { syncFromService() }
             service?.onTrackCompleted = { viewModelScope.launch { nextTrack() } }
+            service?.onSkipNextRequested = { nextTrack() }
+            service?.onSkipPreviousRequested = { previousTrack() }
             service?.setVolume(_state.value.volume)
             applyAllToService()
             loadTracks()
@@ -52,9 +68,18 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     init {
         val ctx = getApplication<Application>()
         ctx.bindService(Intent(ctx, PlayerService::class.java), connection, Context.BIND_AUTO_CREATE)
+        ctx.contentResolver.registerContentObserver(
+            MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, true, mediaStoreObserver
+        )
         viewModelScope.launch {
             ctx.dataStore.data.map { it[THEME_KEY] }.collect { name ->
                 if (name != null) _state.update { it.copy(theme = PlayerTheme.valueOf(name)) }
+            }
+        }
+        viewModelScope.launch {
+            ctx.dataStore.data.map { it[PLAYLISTS_KEY] }.collect { json ->
+                val list = if (json == null) emptyList() else runCatching { Json.decodeFromString<List<Playlist>>(json) }.getOrDefault(emptyList())
+                _state.update { it.copy(playlists = list) }
             }
         }
         viewModelScope.launch { while (true) { delay(500); if (_state.value.isPlaying) syncFromService() } }
@@ -72,6 +97,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     fun previousTrack() {
         val s = _state.value
         val list = s.tracks; if (list.isEmpty()) return
+        if (s.shuffle) { previousShuffled(s, list); return }
         val idx = list.indexOfFirst { it.id == s.currentTrack?.id }
         val prev = when {
             s.repeatMode == RepeatMode.ONE && idx >= 0 -> list[idx]
@@ -84,16 +110,50 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
 
     fun nextTrack() {
         val s = _state.value
+        if (s.queue.isNotEmpty()) {
+            val next = s.queue.first()
+            _state.update { it.copy(queue = it.queue.drop(1)) }
+            service?.play(next)
+            return
+        }
         val list = s.tracks; if (list.isEmpty()) return
+        if (s.shuffle) { nextShuffled(s, list); return }
         val idx = list.indexOfFirst { it.id == s.currentTrack?.id }
         val next = when {
-            s.shuffle -> list.filter { it.id != s.currentTrack?.id }.randomOrNull() ?: list.randomOrNull()
             s.repeatMode == RepeatMode.ONE && idx >= 0 -> list[idx]
             idx >= 0 && idx < list.size - 1 -> list[idx + 1]
             s.repeatMode == RepeatMode.ALL -> list.firstOrNull()
             else -> null
         }
         next?.let { service?.play(it) }
+    }
+
+    private fun nextShuffled(s: PlayerUiState, list: List<Track>) {
+        if (s.repeatMode == RepeatMode.ONE) { s.currentTrack?.let { service?.play(it) }; return }
+        var order = s.shuffleOrder
+        if (order.isEmpty() || order.size != list.size) order = list.map { it.id }.shuffled()
+        var idx = s.shuffleIndex + 1
+        if (idx >= order.size) {
+            if (s.repeatMode != RepeatMode.ALL) return
+            order = list.map { it.id }.shuffled(); idx = 0
+        }
+        val track = list.firstOrNull { it.id == order[idx] } ?: return
+        _state.update { it.copy(shuffleOrder = order, shuffleIndex = idx) }
+        service?.play(track)
+    }
+
+    private fun previousShuffled(s: PlayerUiState, list: List<Track>) {
+        if (s.repeatMode == RepeatMode.ONE) { s.currentTrack?.let { service?.play(it) }; return }
+        var order = s.shuffleOrder
+        if (order.isEmpty() || order.size != list.size) order = list.map { it.id }.shuffled()
+        var idx = s.shuffleIndex - 1
+        if (idx < 0) {
+            if (s.repeatMode != RepeatMode.ALL) return
+            idx = order.size - 1
+        }
+        val track = list.firstOrNull { it.id == order[idx] } ?: return
+        _state.update { it.copy(shuffleOrder = order, shuffleIndex = idx) }
+        service?.play(track)
     }
 
     fun setVolume(v: Int)  { _state.update { it.copy(volume = v) };      service?.setVolume(v) }
@@ -162,7 +222,102 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun toggleExpanded() { _state.update { it.copy(isExpanded = !it.isExpanded) } }
-    fun toggleShuffle()  { _state.update { it.copy(shuffle = !it.shuffle) } }
+
+    fun toggleShuffle() {
+        val s = _state.value
+        if (s.shuffle) { _state.update { it.copy(shuffle = false) }; return }
+        val order = s.tracks.map { it.id }.shuffled()
+        val startIdx = order.indexOf(s.currentTrack?.id).let { if (it >= 0) it else 0 }
+        _state.update { it.copy(shuffle = true, shuffleOrder = order, shuffleIndex = startIdx) }
+    }
+
+    fun playNext(track: Track)      { _state.update { it.copy(queue = listOf(track) + it.queue) } }
+    fun addToQueueEnd(track: Track) { _state.update { it.copy(queue = it.queue + track) } }
+    fun removeFromQueue(track: Track) { _state.update { it.copy(queue = it.queue.filterNot { t -> t.id == track.id }) } }
+    fun reorderQueue(from: Int, to: Int) {
+        _state.update {
+            val q = it.queue.toMutableList()
+            if (from in q.indices && to in q.indices) { val item = q.removeAt(from); q.add(to, item) }
+            it.copy(queue = q)
+        }
+    }
+
+    fun setSleepTimer(minutes: Int?) {
+        sleepTimerJob?.cancel()
+        if (minutes == null) { _state.update { it.copy(sleepTimerEndAt = null, sleepTimerRemainingSec = null, sleepTimerTotalSec = null) }; return }
+        val totalSec = minutes * 60
+        val startAt = System.currentTimeMillis()
+        val endAt = startAt + totalSec * 1000L
+        _state.update { it.copy(sleepTimerEndAt = endAt, sleepTimerTotalSec = totalSec, sleepTimerRemainingSec = totalSec) }
+        sleepTimerJob = viewModelScope.launch {
+            val segments = 5
+            for (step in 1..segments) {
+                val checkpointAt = startAt + totalSec * 1000L * step / segments
+                val waitMs = checkpointAt - System.currentTimeMillis()
+                if (waitMs > 0) delay(waitMs)
+                val remaining = (totalSec - totalSec * step / segments)
+                _state.update { it.copy(sleepTimerRemainingSec = remaining) }
+            }
+            stop()
+            _state.update { it.copy(sleepTimerEndAt = null, sleepTimerRemainingSec = null, sleepTimerTotalSec = null) }
+        }
+    }
+
+    fun createPlaylist(name: String) {
+        if (name.isBlank()) return
+        val updated = _state.value.playlists + Playlist(id = System.currentTimeMillis(), name = name.trim())
+        _state.update { it.copy(playlists = updated) }
+        persistPlaylists(updated)
+    }
+
+    fun createPlaylistWithTrack(name: String, trackId: Long) {
+        if (name.isBlank()) return
+        val updated = _state.value.playlists + Playlist(id = System.currentTimeMillis(), name = name.trim(), trackIds = listOf(trackId))
+        _state.update { it.copy(playlists = updated) }
+        persistPlaylists(updated)
+    }
+
+    fun deletePlaylist(id: Long) {
+        val updated = _state.value.playlists.filterNot { it.id == id }
+        _state.update { it.copy(playlists = updated) }
+        persistPlaylists(updated)
+    }
+
+    fun renamePlaylist(id: Long, name: String) {
+        if (name.isBlank()) return
+        val updated = _state.value.playlists.map { if (it.id == id) it.copy(name = name.trim()) else it }
+        _state.update { it.copy(playlists = updated) }
+        persistPlaylists(updated)
+    }
+
+    fun addToPlaylist(playlistId: Long, trackId: Long) {
+        val updated = _state.value.playlists.map {
+            if (it.id == playlistId && trackId !in it.trackIds) it.copy(trackIds = it.trackIds + trackId) else it
+        }
+        _state.update { it.copy(playlists = updated) }
+        persistPlaylists(updated)
+    }
+
+    fun removeFromPlaylist(playlistId: Long, trackId: Long) {
+        val updated = _state.value.playlists.map {
+            if (it.id == playlistId) it.copy(trackIds = it.trackIds - trackId) else it
+        }
+        _state.update { it.copy(playlists = updated) }
+        persistPlaylists(updated)
+    }
+
+    fun playPlaylist(playlistId: Long) {
+        val s = _state.value
+        val playlist = s.playlists.firstOrNull { it.id == playlistId } ?: return
+        val tracks = playlist.trackIds.mapNotNull { id -> s.tracks.firstOrNull { it.id == id } }
+        if (tracks.isEmpty()) return
+        _state.update { it.copy(queue = tracks.drop(1)) }
+        service?.play(tracks.first())
+    }
+
+    private fun persistPlaylists(playlists: List<Playlist>) {
+        viewModelScope.launch { getApplication<Application>().dataStore.edit { it[PLAYLISTS_KEY] = Json.encodeToString(playlists) } }
+    }
 
     fun cycleRepeat() {
         val next = when (_state.value.repeatMode) {
@@ -224,7 +379,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         sv.setBalance(l, r)
     }
 
-    private fun loadTracks() {
+    fun loadTracks() {
         val ctx = getApplication<Application>()
         val projection = arrayOf(
             MediaStore.Audio.Media._ID, MediaStore.Audio.Media.TITLE,
@@ -249,9 +404,17 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 it.getLong(durC), it.getString(datC) ?: ""
             ))
         }
-        _state.update { it.copy(tracks = list) }
+        _state.update {
+            val order = if (it.shuffle && it.shuffleOrder.size != list.size) list.map { t -> t.id }.shuffled() else it.shuffleOrder
+            it.copy(tracks = list, shuffleOrder = order)
+        }
         recomputeFiltered()
     }
 
-    override fun onCleared() { getApplication<Application>().unbindService(connection); super.onCleared() }
+    override fun onCleared() {
+        sleepTimerJob?.cancel()
+        getApplication<Application>().contentResolver.unregisterContentObserver(mediaStoreObserver)
+        getApplication<Application>().unbindService(connection)
+        super.onCleared()
+    }
 }
