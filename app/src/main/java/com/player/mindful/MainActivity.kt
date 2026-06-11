@@ -15,6 +15,7 @@ import androidx.compose.ui.Modifier
 import com.player.mindful.service.PlayerService
 import com.player.mindful.ui.screen.PlayerScreen
 import com.player.mindful.ui.theme.MudWhite
+import com.player.mindful.ui.theme.PlayerAppTheme
 import com.player.mindful.viewmodel.PlayerViewModel
 
 class MainActivity : ComponentActivity() {
@@ -23,7 +24,7 @@ class MainActivity : ComponentActivity() {
 
     private val permissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
-    ) { /* permissions granted or denied — tracks load either way */ }
+    ) { results -> if (results.values.any { it }) viewModel.loadTracks() }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -32,7 +33,9 @@ class MainActivity : ComponentActivity() {
         startService(Intent(this, PlayerService::class.java))
 
         setContent {
-            PlayerScreen(viewModel = viewModel)
+            PlayerAppTheme {
+                PlayerScreen(viewModel = viewModel)
+            }
         }
     }
 
