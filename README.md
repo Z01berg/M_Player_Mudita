@@ -24,6 +24,19 @@ A local-library Android music player built on the [MMD framework](https://mudita
 
 Tap `SKIN` in the header to cycle between them. All three read from the same `PlayerUiState`, so switching skins mid-playback never loses your place.
 
+<p align="center">
+  <img src="screenshots/skin-switch.gif" width="420" alt="Cycling the SKIN button through Marshall, Synth, and Soviet headers"/>
+</p>
+
+<p align="center">
+  <img src="screenshots/synth-sequencer.png" width="240" alt="Synth skin showing the sequencer-grid seek bar"/>
+  <img src="screenshots/soviet-amplifier.png" width="240" alt="Soviet skin showing the UM-50 amplifier panel and signal-level bar graph"/>
+</p>
+
+<p align="center">
+  <img src="screenshots/synth-module.png" width="480" alt="Synth module panel: speed/EQ/pitch steppers, lever shuffle switch, and sleep timer"/>
+</p>
+
 ## E-Ink design rules
 
 This isn't a Mudita device, but I held the UI to Mudita's own published E-Ink guidelines anyway, since they're the right constraints for this kind of screen regardless of hardware:
@@ -32,16 +45,38 @@ This isn't a Mudita device, but I held the UI to Mudita's own published E-Ink gu
 - **Always show UI controls.** Every scrollable list has a persistent scrollbar — never gesture-only.
 - **Avoid grey separators.** List rows are divided with a dashed pure-black line instead of a lighter solid one.
 - **Follow the lines.** Every row in a given list shares one fixed height (long titles truncate with an ellipsis instead of wrapping), so dividers land in the same place on every redraw.
-- **Minimise redraws.** The sleep timer depletes in exactly 5 steps over its duration — like a draining battery icon — instead of redrawing a number every second.
+- **Minimise redraws.** Volume is ten discrete blocks instead of a slider — one tap, one redraw, instead of a continuous drag repainting every pixel of travel. The sleep timer follows the same logic, five steps total instead of a number ticking down every second.
+
+<p align="center">
+  <img src="screenshots/volume-control.gif" width="420" alt="Tapping through the discrete volume blocks"/>
+</p>
+
+<p align="center">
+  <img src="screenshots/marshall-nowplaying.png" width="260" alt="Marshall now-playing card, seek bar, transport, and EQ knobs"/>
+</p>
 
 ## Features
 
-- Shuffle that actually respects repeat mode: a Fisher–Yates order that won't repeat a track until the whole list has played once.
-- Play-next queue, separate from the shuffle/repeat order.
-- Playlists, persisted locally.
-- A 5-segment battery sleep timer (see above).
-- Lock-screen and notification transport controls via `MediaSessionCompat`.
-- Two-pane landscape layout (now-playing/controls on one side, queue/library on the other) sharing all composables with portrait — no duplicated layout code.
+- **Shuffle that respects repeat mode** — a Fisher–Yates order that won't repeat a track until the whole list has played once, instead of an infinite random pick that ignored repeat settings.
+- **Play-next queue**, separate from the shuffle/repeat order, managed from a per-track action sheet.
+- **Playlists**, persisted locally, with their own tab in the library.
+- **A 5-segment battery sleep timer** — depletes in exactly five visual steps over its duration.
+- **Lock-screen and notification transport controls** via `MediaSessionCompat`.
+- **Two-pane landscape layout** (now-playing/controls on one side, queue/library on the other) sharing all composables with portrait — no duplicated layout code.
+
+<p align="center">
+  <img src="screenshots/track-actions-sheet.png" width="240" alt="Track actions sheet: Play Next and Add to Playlist"/>
+  <img src="screenshots/marshall-playlists.png" width="240" alt="LISTS tab showing a created playlist"/>
+</p>
+
+<p align="center">
+  <img src="screenshots/marshall-sleep-timer.png" width="240" alt="5-segment battery sleep timer and AMP_FLIP shuffle switch"/>
+  <img src="screenshots/soviet-panel.png" width="240" alt="Soviet balance/EQ/tone panel with lock-lever switches"/>
+</p>
+
+<p align="center">
+  <img src="screenshots/landscape-layout.png" width="480" alt="Two-pane landscape layout: now-playing on the left, queue and library on the right"/>
+</p>
 
 ## A couple of MMD gotchas worth documenting
 
