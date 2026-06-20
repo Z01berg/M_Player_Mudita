@@ -74,8 +74,12 @@ This isn't a Mudita device, but I held the UI to Mudita's own published E-Ink gu
   <img src="screenshots/soviet-panel.png" width="240" alt="Soviet balance/EQ/tone panel with lock-lever switches"/>
 </p>
 
+Landscape reuses the same composables in all three skins — only the top-level arrangement changes:
+
 <p align="center">
-  <img src="screenshots/landscape-layout.png" width="480" alt="Two-pane landscape layout: now-playing on the left, queue and library on the right"/>
+  <img src="screenshots/landscape-marshall.png" width="300" alt="Marshall skin in landscape: seek and transport on the left, queue and library on the right"/>
+  <img src="screenshots/landscape-synth.png" width="300" alt="Synth skin in landscape: prev/now/next track stack on the left"/>
+  <img src="screenshots/landscape-soviet.png" width="300" alt="Soviet skin in landscape: corner-pinned now-playing card"/>
 </p>
 
 ## A couple of MMD gotchas worth documenting
